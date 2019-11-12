@@ -250,17 +250,22 @@ fn_test_file_exists_src() {
 	fn_run_cmd_src "test -e '$1'"
 }
 
-# "df -t <filesystemtype> -t <filesystemtype> <directory>" command outputs the
-# info about <directory> if it is of one of the given filesystem types.
-# it errors otherwise, and this error is suppressed by redirection.
-# the filesystem type is determined by the status returned (i.e. 0 if successful).
-# "df -T" is not used because of macOS incompatibility.
+# Outputs 0 if given directory is not a type of FAT filesystem.
+# Outputs greater than 0 otherwise. Has to be implemented for different OSes.
 fn_df_t_src() {
-	fn_run_cmd_src "df -t vfat -t exfat -t fat32 -t fat16 -t fat12 '${1}'" 2> /dev/null
+	case "${OSTYPE}" in
+		linux*) fn_run_cmd_src "df -T '${1}' | awk 'NR==2' | awk '{print \$2}' | grep -c -i -e 'fat'" ;;
+		darwin*) fn_run_cmd_src "df -T msdos,exfat ${1} 2>&1 | awk 'NR==2' | grep -c -e '${1%/}'" ;;
+		*) echo 0 ;; # not implemented OSes, do not perform check.
+	esac
 }
 
 fn_df_t() {
-	fn_run_cmd "df -t vfat -t exfat -t fat32 -t fat16 -t fat12 '${1}'" 2> /dev/null
+	case "${OSTYPE}" in
+		linux*) fn_run_cmd "df -T '${1}' | awk 'NR==2' | awk '{print \$2}' | grep -c -i -e 'fat'" ;;
+		darwin*) fn_run_cmd "df -T msdos,exfat ${1} 2>&1 | awk 'NR==2' | grep -c -e '${1%/}'" ;;
+		*) echo 0 ;; # not implemented OSes, do not perform check.
+	esac
 }
 
 # -----------------------------------------------------------------------------
@@ -407,19 +412,16 @@ if [ -z "$(fn_find_backup_marker "$DEST_FOLDER")" ]; then
 	exit 1
 fi
 
-# Check source and destination file-system (df -t ...). 
-# If one of them is FAT, use the --modify-window rsync parameter 
+# Check source and destination file-system (df -T /dest).
+# If one of them is FAT, use the --modify-window rsync parameter
 # (see man rsync) with a value of 1 or 2.
 #
-# The check is performed from the status returned from the command.
-# (i.e. 0 if filesystem is FAT, presumably 1 otherwise.)
-df_cmd_output_src=$(fn_df_t_src "${SRC_FOLDER}/"); df_cmd_status_src=$?
-df_cmd_output_dest=$(fn_df_t "${DEST_FOLDER}/"); df_cmd_status_dest=$?
-if [[ "${df_cmd_status_src}" -eq 0 ]]; then
+# fn_df_t commands output 0 when disk is not FAT, and >0 otherwise.
+if [[ "$(fn_df_t_src "${SRC_FOLDER}/")" -gt 0 ]]; then
 	fn_log_info "Source file-system is a version of FAT."
 	fn_log_info "Using the --modify-window rsync parameter with value 2."
 	RSYNC_FLAGS="${RSYNC_FLAGS} --modify-window=2"
-elif [[ "${df_cmd_status_dest}" -eq 0 ]]; then
+elif [[ "$(fn_df_t "${DEST_FOLDER}/")" -gt 0 ]]; then
 	fn_log_info "Destination file-system is a version of FAT."
 	fn_log_info "Using the --modify-window rsync parameter with value 2."
 	RSYNC_FLAGS="${RSYNC_FLAGS} --modify-window=2"
